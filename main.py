@@ -134,8 +134,18 @@ def list_models():
     }
 
 @app.post("/v1/chat/completions", dependencies=[Depends(verify_key)])
-async def chat_completions(req: ChatCompletionRequest):
+async def chat_completions(req: Request):
     mgr = get_manager()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+
+    model = body.get("model", "deepseek-chat")
+    messages = body.get("messages", [])
+    stream = body.get("stream", True)
+    thinking = body.get("thinking", model == "deepseek-reasoner")
+    search = body.get("search", False)
 
     # Convert OpenAI messages → single prompt (web API is single-turn per message)
     def _extract_text(content: Any) -> str:
@@ -144,9 +154,8 @@ async def chat_completions(req: ChatCompletionRequest):
             return " ".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")
         return str(content)
 
-    messages = req.messages
-    system_parts = [_extract_text(m.content) for m in messages if m.role == "system"]
-    user_parts   = [_extract_text(m.content) for m in messages if m.role == "user"]
+    system_parts = [_extract_text(m.get("content", "")) for m in messages if m.get("role") == "system"]
+    user_parts   = [_extract_text(m.get("content", "")) for m in messages if m.get("role") == "user"]
 
     if not user_parts or not any(user_parts):
         raise HTTPException(status_code=400, detail="No user message provided")
@@ -156,14 +165,11 @@ async def chat_completions(req: ChatCompletionRequest):
     if system_parts:
         prompt_parts.append(f"System: {' '.join(system_parts)}")
     for m in messages[:-1]:  # history
-        role = "User" if m.role == "user" else "Assistant"
-        prompt_parts.append(f"{role}: {_extract_text(m.content)}")
+        role = "User" if m.get("role") == "user" else "Assistant"
+        prompt_parts.append(f"{role}: {_extract_text(m.get('content', ''))}")
     
-    prompt_parts.append(_extract_text(messages[-1].content))  # latest user message
+    prompt_parts.append(_extract_text(messages[-1].get("content", "")))  # latest user message
     prompt = "\n\n".join(prompt_parts)
-
-    thinking = req.thinking or (req.model == "deepseek-reasoner")
-    search   = req.search or False
 
     def stream_generator():
         try:
@@ -172,14 +178,14 @@ async def chat_completions(req: ChatCompletionRequest):
             yield ": keep-alive\n\n"
             lines = mgr.stream_chat(prompt, thinking=thinking, search=search)
             for text in _parse_deepseek_sse(lines):
-                yield _openai_chunk(text, req.model)
-            yield _openai_chunk("", req.model, finish=True)
+                yield _openai_chunk(text, model)
+            yield _openai_chunk("", model, finish=True)
             yield "data: [DONE]\n\n"
         except Exception as e:
             err = {"error": {"message": str(e), "type": "server_error"}}
             yield f"data: {json.dumps(err)}\n\n"
 
-    if req.stream:
+    if stream:
         return StreamingResponse(
             stream_generator(),
             media_type="text/event-stream",
@@ -203,7 +209,7 @@ async def chat_completions(req: ChatCompletionRequest):
             "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": req.model,
+            "model": model,
             "choices": [{
                 "index": 0,
                 "message": {"role": "assistant", "content": full_text},
