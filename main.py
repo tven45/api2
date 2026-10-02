@@ -53,11 +53,11 @@ class NewAccount(BaseModel):
     note: str = ""
 
 # ─── SSE Helpers ─────────────────────────────────────────────────────────────
-def _openai_chunk(content: str, model: str, finish: bool = False) -> str:
+def _openai_chunk(chunk_id: str, created: int, content: str, model: str, finish: bool = False) -> str:
     chunk = {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
+        "id": chunk_id,
         "object": "chat.completion.chunk",
-        "created": int(time.time()),
+        "created": created,
         "model": model,
         "choices": [{
             "index": 0,
@@ -172,14 +172,16 @@ async def chat_completions(req: Request):
     prompt = "\n\n".join(prompt_parts)
 
     def stream_generator():
+        chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+        created = int(time.time())
         try:
             # Send SSE keepalive comment every ~5s to prevent Render 30s timeout
             # during PoW solve and session creation
             yield ": keep-alive\n\n"
             lines = mgr.stream_chat(prompt, thinking=thinking, search=search)
             for text in _parse_deepseek_sse(lines):
-                yield _openai_chunk(text, model)
-            yield _openai_chunk("", model, finish=True)
+                yield _openai_chunk(chunk_id, created, text, model)
+            yield _openai_chunk(chunk_id, created, "", model, finish=True)
             yield "data: [DONE]\n\n"
         except Exception as e:
             err = {"error": {"message": str(e), "type": "server_error"}}
