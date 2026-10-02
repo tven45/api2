@@ -26,9 +26,12 @@ def verify_key(creds: HTTPAuthorizationCredentials = Depends(security)):
     return creds.credentials
 
 # ─── Models ──────────────────────────────────────────────────────────────────
+from typing import Optional, List, Any
+
+# ─── Models ──────────────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: Any  # Accept string or list of dicts (OpenAI Vision standard)
 
 class ChatCompletionRequest(BaseModel):
     model: str = "deepseek-chat"
@@ -38,6 +41,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = None
     thinking: Optional[bool] = False    # DeepSeek R1 thinking mode
     search: Optional[bool] = False      # DeepSeek web search
+
 
 class TokenUpdate(BaseModel):
     account_id: int
@@ -134,12 +138,17 @@ async def chat_completions(req: ChatCompletionRequest):
     mgr = get_manager()
 
     # Convert OpenAI messages → single prompt (web API is single-turn per message)
-    # We send the last user message; system + history go as context
-    messages = req.messages
-    system_parts = [m.content for m in messages if m.role == "system"]
-    user_parts   = [m.content for m in messages if m.role == "user"]
+    def _extract_text(content: Any) -> str:
+        if isinstance(content, str): return content
+        if isinstance(content, list):
+            return " ".join(part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text")
+        return str(content)
 
-    if not user_parts:
+    messages = req.messages
+    system_parts = [_extract_text(m.content) for m in messages if m.role == "system"]
+    user_parts   = [_extract_text(m.content) for m in messages if m.role == "user"]
+
+    if not user_parts or not any(user_parts):
         raise HTTPException(status_code=400, detail="No user message provided")
 
     # Build prompt: system context + conversation history + latest user message
@@ -147,11 +156,10 @@ async def chat_completions(req: ChatCompletionRequest):
     if system_parts:
         prompt_parts.append(f"System: {' '.join(system_parts)}")
     for m in messages[:-1]:  # history
-        if m.role == "user":
-            prompt_parts.append(f"User: {m.content}")
-        elif m.role == "assistant":
-            prompt_parts.append(f"Assistant: {m.content}")
-    prompt_parts.append(messages[-1].content)  # latest user message
+        role = "User" if m.role == "user" else "Assistant"
+        prompt_parts.append(f"{role}: {_extract_text(m.content)}")
+    
+    prompt_parts.append(_extract_text(messages[-1].content))  # latest user message
     prompt = "\n\n".join(prompt_parts)
 
     thinking = req.thinking or (req.model == "deepseek-reasoner")
