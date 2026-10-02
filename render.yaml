@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: deepseek-proxy
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: API_KEY
+        sync: false          # set in Render dashboard
+      - key: ADMIN_KEY
+        sync: false          # set in Render dashboard
+      - key: ACCOUNTS_JSON
+        sync: false          # base64 JSON — auto-updated by the server
+      - key: NOTIFY_WEBHOOK
+        sync: false          # Discord/Telegram webhook (optional)
+      - key: RENDER_API_KEY
+        sync: false          # your Render API key (for auto-persisting tokens)
+      - key: RENDER_SERVICE_ID
+        sync: false          # your Render service ID (auto-detected at startup)
+      - key: PYTHON_VERSION
+        value: "3.12.0"

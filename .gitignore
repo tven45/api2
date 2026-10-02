@@ -1,0 +1,8 @@
+accounts.json
+.env
+token_backup.json
+__pycache__/
+*.pyc
+*.pyd
+.venv/
+venv/
