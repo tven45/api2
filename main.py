@@ -159,6 +159,9 @@ async def chat_completions(req: ChatCompletionRequest):
 
     def stream_generator():
         try:
+            # Send SSE keepalive comment every ~5s to prevent Render 30s timeout
+            # during PoW solve and session creation
+            yield ": keep-alive\n\n"
             lines = mgr.stream_chat(prompt, thinking=thinking, search=search)
             for text in _parse_deepseek_sse(lines):
                 yield _openai_chunk(text, req.model)
@@ -178,7 +181,8 @@ async def chat_completions(req: ChatCompletionRequest):
             },
         )
     else:
-        # Non-streaming: collect all chunks
+        # Non-streaming: collect all chunks but use streaming internally
+        # to avoid Render's 30-second response timeout
         full_text = ""
         try:
             lines = mgr.stream_chat(prompt, thinking=thinking, search=search)
