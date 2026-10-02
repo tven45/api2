@@ -224,6 +224,10 @@ def admin_add_account(body: NewAccount):
     acc = get_manager().add_account(body.email, body.token, body.note)
     return {"ok": True, "account": acc}
 
+@app.get("/")
+def root():
+    return {"service": "deepseek-proxy", "status": "running", "version": "1.0.0"}
+
 @app.get("/health")
 def health():
     mgr = get_manager()
@@ -235,7 +239,13 @@ def health():
         "total_accounts": len(accs),
     }
 
+import sys as _sys
+print(f"[startup] Python {_sys.version}", flush=True)
+print(f"[startup] API_KEY set: {bool(os.getenv('API_KEY'))}", flush=True)
+print(f"[startup] ACCOUNTS_JSON set: {bool(os.getenv('ACCOUNTS_JSON'))}", flush=True)
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+
