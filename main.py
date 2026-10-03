@@ -174,10 +174,15 @@ async def chat_completions(req: Request):
     def stream_generator():
         chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
         created = int(time.time())
+        # Send role announcement first (OpenAI standard — keeps connection alive
+        # during PoW solve AND tells the client a message is starting)
+        role_chunk = json.dumps({
+            "id": chunk_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+        })
+        yield f"data: {role_chunk}\n\n"
         try:
-            # Send SSE keepalive comment every ~5s to prevent Render 30s timeout
-            # during PoW solve and session creation
-            yield ": keep-alive\n\n"
             lines = mgr.stream_chat(prompt, thinking=thinking, search=search)
             for text in _parse_deepseek_sse(lines):
                 yield _openai_chunk(chunk_id, created, text, model)
