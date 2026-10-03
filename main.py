@@ -244,11 +244,11 @@ def admin_add_account(body: NewAccount):
     acc = get_manager().add_account(body.email, body.token, body.note)
     return {"ok": True, "account": acc}
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"service": "deepseek-proxy", "status": "running", "version": "1.0.0"}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     mgr = get_manager()
     accs = mgr.get_status()
