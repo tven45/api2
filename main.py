@@ -77,6 +77,7 @@ def _parse_deepseek_sse(lines_iter):
       data: {"v": {"response": {..., "fragments": [...]}}} ← full init object
       data: {"p": "response/status", "o": "SET", "v": "FINISHED"}  ← done
     """
+    fragment_types: dict = {}  # fragment index → "THINK" | "RESPONSE" | "TEXT"
     for line in lines_iter:
         if not line:
             continue
@@ -96,31 +97,49 @@ def _parse_deepseek_sse(lines_iter):
         p = d.get("p", "")
         o = d.get("o", "")
 
-        # ── Delta string token: {"v": " hello"} ──────────────────────────
-        if isinstance(v, str) and v and not p:
-            yield v
-
-        # ── Patch append: {"p": "...", "o": "APPEND", "v": "text"} ──────
-        elif o == "APPEND" and isinstance(v, str) and v:
-            yield v
-
         # ── Full response init: {"v": {"response": {...}}} ───────────────
-        elif isinstance(v, dict) and "response" in v:
+        # Build fragment type map and yield initial non-THINK content
+        if isinstance(v, dict) and "response" in v:
             resp = v["response"]
-            for frag in resp.get("fragments", []):
+            for idx, frag in enumerate(resp.get("fragments", [])):
+                ftype = frag.get("type", "RESPONSE")
+                fragment_types[idx] = ftype
                 c = frag.get("content", "")
-                ftype = frag.get("type", "")
-                # Accept TEXT, RESPONSE, and any non-THINK type
                 if c and ftype != "THINK":
                     yield c
+
+        # ── SET patch adding a new fragment: track its type ───────────────
+        elif o == "SET" and p and p.startswith("response/fragments/"):
+            parts = p.split("/")
+            if len(parts) >= 3 and parts[2].isdigit():
+                idx = int(parts[2])
+                if isinstance(v, dict):
+                    ftype = v.get("type", "RESPONSE")
+                    fragment_types[idx] = ftype
+                    c = v.get("content", "")
+                    if c and ftype != "THINK":
+                        yield c
+
+        # ── APPEND patch: only yield if fragment is not THINK ─────────────
+        elif o == "APPEND" and isinstance(v, str) and v:
+            # Path: "response/fragments/N/content" — get fragment index
+            parts = p.split("/") if p else []
+            if len(parts) >= 3 and parts[2].isdigit():
+                idx = int(parts[2])
+                ftype = fragment_types.get(idx, "RESPONSE")
+                if ftype != "THINK":
+                    yield v
+            elif not p:
+                # No path → simple delta, always yield
+                yield v
+
+        # ── Delta string token: {"v": " hello"} (no path, no op) ─────────
+        elif isinstance(v, str) and v and not p and not o:
+            yield v
 
         # ── Finished ─────────────────────────────────────────────────────
         if p == "response/status" and v == "FINISHED":
             return
-        if isinstance(v, list):
-            for item in v:
-                if isinstance(item, dict) and item.get("p") == "quasi_status" and item.get("v") == "FINISHED":
-                    return
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
 @app.get("/v1/models", dependencies=[Depends(verify_key)])
